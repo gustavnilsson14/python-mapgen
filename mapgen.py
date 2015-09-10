@@ -186,13 +186,15 @@ class Level :
         maxTries = 100
         room = self.main_room
         while len( self.corridoors ) != amount and maxTries != 0 :
+            maxTries -= 1
             start = room.get_corridoor_start()
             end = self.get_room( room ).get_corridoor_start()
             corridoor = Corridoor( self, start, end )
+            if corridoor.active == 0 :
+                continue
             room.corridoors += [corridoor]
             self.corridoors += [corridoor]
             room = choice( self.rooms )
-            maxTries -= 1
         for corridoor in self.corridoors :
             corridoor.finish()
             
@@ -210,8 +212,10 @@ class Level :
             index = randint( 0, len( CONTENT_TRAP_LIST ) - 1 )
             trap = CONTENT_TRAP_LIST[index]
             self.danger_level += index * 2
-            room = self.get_room()
-            room.insert_content_by_wall( trap )
+            area = choice(self.corridoors)
+            if randint(0,4) < 2 :
+                area = choice(self.rooms)
+            area.insert_content_on_floor( trap )
             maxTries -= 1
         maxTries = 100
         while self.boon_level < amount and maxTries != 0 :
@@ -221,6 +225,11 @@ class Level :
             room = self.get_room()
             room.insert_content_by_wall( boon )
             maxTries -= 1
+        for i in range(0,amount) :
+            index = randint( 0, len( CONTENT_OTHER_LIST ) - 1 )
+            other = CONTENT_OTHER_LIST[index]
+            room = self.get_room()
+            room.insert_content_by_wall( other )
     
     def get_room( self, excluded_room = 0 ) :
         max_iterations = 100
@@ -243,17 +252,52 @@ class Level :
                 }]
             grid_list.append( list_row )
         return grid_list
-    
-class Room :
+
+class Area :
+
+    def __init__( self ) :
+        self.floors = []
+        self.walls = []
+
+    def insert_content_on_floor( self, content ) :
+        tile = choice(self.floors)
+        max_tries = 100
+        while tile.content != 0 and max_tries != 0 :
+            max_tries -= 1
+            tile = choice(self.floors)
+        if max_tries == 0 :
+            return
+        tile.content = content
+
+    def insert_content_by_wall( self, content ) :
+        tile = choice(self.floors)
+        max_tries = 100
+        while ( tile.content != 0 or len( tile.get_neighbors_of_type( [TILE_TYPE_WALL] ) ) == 0 ) and max_tries != 0 :
+            max_tries -= 1
+            tile = choice(self.floors)
+        if max_tries == 0 :
+            return
+        tile.content = content
+
+    def insert_content_not_by_wall( self, content ) :
+        tile = choice(self.floors)
+        max_tries = 100
+        while ( tile.content != 0 and len( tile.get_neighbors_of_type( [TILE_TYPE_WALL] ) ) != 0 ) and max_tries != 0 :
+            max_tries -= 1
+            tile = choice(self.floors)
+        if max_tries == 0 :
+            return
+        tile.content = content
+        
+class Room(Area) :
     
     def __init__( self, level, origin, rangeX, rangeY, padding ) :
+        Area.__init__( self )
         self.level = level
         self.active = 1
         self.origin = origin
         self.rangeX = rangeX
         self.rangeY = rangeY
-        self.floors = []
-        self.walls = []
         self.corridoors = []
         for x in range( origin.x - rangeX - padding, origin.x + rangeX + padding ) :
             for y in range( origin.y - rangeY - padding, origin.y + rangeY + padding ) :
@@ -313,51 +357,23 @@ class Room :
                 return 1
         return 0
         
-    def insert_content_on_floor( self, content ) :
-        tile = choice(self.floors)
-        max_tries = 100
-        while tile.content != 0 and max_tries != 0 :
-            max_tries -= 1
-            tile = choice(self.floors)
-        if max_tries == 0 :
-            return
-        tile.content = content
-        
-    def insert_content_by_wall( self, content ) :
-        tile = choice(self.floors)
-        max_tries = 100
-        while ( tile.content != 0 or len( tile.get_neighbors_of_type( [TILE_TYPE_WALL] ) ) == 0 ) and max_tries != 0 :
-            max_tries -= 1
-            tile = choice(self.floors)
-        if max_tries == 0 :
-            return
-        tile.content = content
-        
-    def insert_content_not_by_wall( self, content ) :
-        tile = choice(self.floors)
-        max_tries = 100
-        while ( tile.content != 0 and len( tile.get_neighbors_of_type( [TILE_TYPE_WALL] ) ) != 0 ) and max_tries != 0 :
-            max_tries -= 1
-            tile = choice(self.floors)
-        if max_tries == 0 :
-            return
-        tile.content = content
-        
     def intersects_room( self, room ) :
         return 0
         
     def blob_find( self ) :
         return
     
-class Corridoor :
+class Corridoor(Area) :
     
     def __init__( self, level, start = (0,0), end = (0,0) ) :
+        Area.__init__( self )
         self.level = level
         self.start = start
         self.end = end
         self.path = 0
+        self.active = 0
         if self.end != 0 and self.start != 0 :
-            self.generate_route()
+            self.active = self.generate_route()
         
     def generate_route( self ) :
         types_dict = {
@@ -371,21 +387,27 @@ class Corridoor :
         self.end.type = TILE_TYPE_CORRIDOOR_START
         
         self.path = Path( self.level, types_dict, self.start, self.end )
-        
+        if len( self.path.path ) == 0 :
+            self.finish()
+            return 0
         for tile in self.path.path :
             tile.type = TILE_TYPE_CORRIDOOR
             neighbors = tile.get_neighbors_of_type( [ TILE_TYPE_BASE ], 0 )
             for neighbor in neighbors :
+                self.walls += [neighbor]
                 neighbor.type = TILE_TYPE_WALL_CORRIDOOR
+        self.floors = self.path.path
         self.start.type = TILE_TYPE_CORRIDOOR_START
         self.end.type = TILE_TYPE_CORRIDOOR_START
+        return 1
 
     def finish( self ) :
-        if self.path == 0 :
+        if self.active == 0 :
+            if self.end != 0 and self.start != 0 :
+                self.start.type = TILE_TYPE_WALL
+                self.end.type = TILE_TYPE_WALL
             return
-        elif len(self.path.path) == 0 :
-            self.start.type = TILE_TYPE_WALL
-            self.end.type = TILE_TYPE_WALL
+        self.active = 1
                         
 class Tile :
     
@@ -499,4 +521,4 @@ data = {
     "grid": level.grid_to_list(),
 }
 string_grid_json = json.dumps( data, sort_keys=True,indent=4, separators=(',', ': '))
-print string_grid_json
+#print string_grid_json
